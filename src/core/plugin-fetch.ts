@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, readdirSync } from "node:fs"
-import { join, dirname } from "node:path"
+import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { homedir } from "node:os"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -11,21 +11,6 @@ const execFileAsync = promisify(execFile)
 // The plugin loader (load-agents.ts) reads agents/ via import.meta.url.
 // dist/ contains the compiled plugin entry. package.json declares the main field.
 const OPENCODE_DIRS = ["agents", "dist"]
-
-// Directories to exclude from the clone (not needed for OpenCode plugin).
-const EXCLUDE_DIRS = [
-  "node_modules",
-  ".git",
-  "src",
-  "scripts",
-  "tests",
-  "docs",
-  "tray",
-  "profiles",
-  "runtimes",
-  "adapters",
-  ".vscode",
-]
 
 export interface PluginFetchOptions {
   /** Ref to checkout (branch, tag, commit). Defaults to "main". */
@@ -45,7 +30,6 @@ export interface PluginFetchOptions {
  * The URL's `://` is stripped to a single `:` for the filesystem path.
  */
 export function resolvePluginCacheDir(pluginEntry: string): string | null {
-  // Extract the plugin name before the @
   const atIndex = pluginEntry.indexOf("@")
   if (atIndex <= 0) return null
 
@@ -91,11 +75,18 @@ function resolveGitUrl(pluginEntry: string): string | null {
 }
 
 /**
+ * Resolve the plugin name from a plugin entry string like "agent-venom@git+https://...".
+ */
+function resolvePluginName(pluginEntry: string): string {
+  const atIndex = pluginEntry.indexOf("@")
+  return atIndex > 0 ? pluginEntry.slice(0, atIndex) : "agent-venom"
+}
+
+/**
  * Resolve the GitHub tarball URL for a given repo URL and ref.
  * Falls back to git clone if the URL doesn't match github.com.
  */
 function resolveTarballUrl(gitUrl: string, ref: string): string | null {
-  // Match github.com URLs
   const m = gitUrl.match(/https:\/\/github\.com\/([^/]+)\/([^/.]+)/)
   if (!m) return null
 
@@ -105,15 +96,68 @@ function resolveTarballUrl(gitUrl: string, ref: string): string | null {
 }
 
 /**
+ * Write the wrapper package.json that OpenCode v1 expects at the cache root.
+ * This matches the structure: { "dependencies": { "<name>": "github:..." } }
+ */
+function writeWrapperPackageJson(cacheDir: string, pluginName: string, gitUrl: string, ref: string): void {
+  const gitDep = gitUrl.replace("https://", "")
+  const pkg = {
+    dependencies: {
+      [pluginName]: `github:${gitDep}#${ref}`
+    }
+  }
+  writeFileSync(join(cacheDir, "package.json"), JSON.stringify(pkg, null, 2))
+}
+
+/**
+ * Copy extracted repo contents into node_modules/<pluginName>/ inside cacheDir.
+ * Also creates the wrapper package.json at the cache root.
+ */
+function installPluginIntoCache(
+  extractedDir: string,
+  cacheDir: string,
+  pluginName: string,
+  gitUrl: string,
+  ref: string,
+): void {
+  const pluginDir = join(cacheDir, "node_modules", pluginName)
+
+  if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true })
+  mkdirSync(pluginDir, { recursive: true })
+
+  for (const dir of OPENCODE_DIRS) {
+    const src = join(extractedDir, dir)
+    if (existsSync(src)) {
+      cpSync(src, join(pluginDir, dir), { recursive: true })
+    }
+  }
+
+  for (const file of ["package.json", "README.md"]) {
+    const src = join(extractedDir, file)
+    if (existsSync(src)) {
+      cpSync(src, join(pluginDir, file))
+    }
+  }
+
+  writeWrapperPackageJson(cacheDir, pluginName, gitUrl, ref)
+}
+
+/**
  * Fetch the Agent-Venom plugin files into OpenCode's cache directory.
+ *
+ * OpenCode v1 stores git plugins at:
+ *   ~/.cache/opencode/packages/<name>@git+https:/<path>#<ref>/
+ *     package.json          (wrapper: { "dependencies": { "<name>": "<git-url>#<ref>" } })
+ *     node_modules/
+ *       <name>/             (actual plugin code)
+ *         agents/
+ *         dist/
+ *         package.json
  *
  * Strategy:
  * 1. Try GitHub tarball download (fast, no git dependency).
- * 2. Fall back to git clone with sparse-checkout if tarball fails.
+ * 2. Fall back to git sparse-checkout if tarball fails.
  * 3. Fall back to full git clone as last resort.
- *
- * Only the directories needed for OpenCode plugin loading are copied:
- * agents/, dist/, package.json, README.md.
  */
 export async function syncPluginToCache(
   pluginEntry: string,
@@ -122,6 +166,7 @@ export async function syncPluginToCache(
   const log = options.log ?? (() => {})
   const ref = options.ref ?? resolveRef(pluginEntry)
   const gitUrl = resolveGitUrl(pluginEntry)
+  const pluginName = resolvePluginName(pluginEntry)
 
   if (!gitUrl) {
     return { ok: false, error: `Cannot parse git URL from plugin entry: ${pluginEntry}` }
@@ -134,11 +179,12 @@ export async function syncPluginToCache(
 
   // Already cached and not forcing re-fetch
   if (!options.force && existsSync(cacheDir)) {
-    // Check if the cache has the essential files
+    const pluginDir = join(cacheDir, "node_modules", pluginName)
     const hasPackageJson = existsSync(join(cacheDir, "package.json"))
-    const hasDist = existsSync(join(cacheDir, "dist"))
-    const hasAgents = existsSync(join(cacheDir, "agents"))
-    if (hasPackageJson && hasDist && hasAgents) {
+    const hasPluginDir = existsSync(pluginDir)
+    const hasDist = existsSync(join(pluginDir, "dist"))
+    const hasAgents = existsSync(join(pluginDir, "agents"))
+    if (hasPackageJson && hasPluginDir && hasDist && hasAgents) {
       log(`[agent-venom] plugin cache exists, skipping fetch: ${cacheDir}`)
       return { ok: true }
     }
@@ -150,48 +196,42 @@ export async function syncPluginToCache(
   // Strategy 1: GitHub tarball download
   const tarballUrl = resolveTarballUrl(gitUrl, ref)
   if (tarballUrl) {
-    const result = await fetchViaTarball(tarballUrl, cacheDir, log)
+    const result = await fetchViaTarball(tarballUrl, cacheDir, pluginName, ref, gitUrl, log)
     if (result.ok) return result
     log(`[agent-venom] tarball download failed, trying git clone...`)
   }
 
   // Strategy 2: Git sparse-checkout (only needed dirs)
-  const result = await fetchViaSparseClone(gitUrl, ref, cacheDir, log)
+  const result = await fetchViaSparseClone(gitUrl, ref, cacheDir, pluginName, log)
   if (result.ok) return result
 
   // Strategy 3: Full git clone
   log(`[agent-venom] sparse checkout failed, trying full clone...`)
-  return await fetchViaFullClone(gitUrl, ref, cacheDir, log)
+  return await fetchViaFullClone(gitUrl, ref, cacheDir, pluginName, log)
 }
 
 async function fetchViaTarball(
   url: string,
   cacheDir: string,
+  pluginName: string,
+  ref: string,
+  gitUrl: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
   const tmpDir = cacheDir + ".tmp-tarball"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
     mkdirSync(tmpDir, { recursive: true })
 
-    // Download and extract tarball
     await execFileAsync("curl", [
-      "-fsSL",
-      url,
-      "-o",
-      join(tmpDir, "repo.tar.gz"),
+      "-fsSL", url, "-o", join(tmpDir, "repo.tar.gz"),
     ], { timeout: 60_000 })
 
     await execFileAsync("tar", [
-      "-xzf",
-      join(tmpDir, "repo.tar.gz"),
-      "-C",
-      tmpDir,
+      "-xzf", join(tmpDir, "repo.tar.gz"), "-C", tmpDir,
     ], { timeout: 30_000 })
 
-    // Find the extracted directory (github tarballs extract to <repo>-<ref>/)
     const entries = readdirSync(tmpDir).filter(
       (e: string) => e !== "repo.tar.gz" && e !== ".",
     )
@@ -202,26 +242,12 @@ async function fetchViaTarball(
 
     const extractedDir = join(tmpDir, entries[0]!)
 
-    // Create cache dir and copy needed directories
-    if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true })
-    mkdirSync(cacheDir, { recursive: true })
-
-    for (const dir of OPENCODE_DIRS) {
-      const src = join(extractedDir, dir)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, dir), { recursive: true })
-      }
+    if (!existsSync(extractedDir) || !existsSync(join(extractedDir, "package.json"))) {
+      return { ok: false, error: `Tarball extracted but package.json not found in ${extractedDir}` }
     }
 
-    // Copy package.json and README.md
-    for (const file of ["package.json", "README.md"]) {
-      const src = join(extractedDir, file)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, file))
-      }
-    }
-
-    log(`[agent-venom] plugin fetched via tarball -> ${cacheDir}`)
+    installPluginIntoCache(extractedDir, cacheDir, pluginName, gitUrl, ref)
+    log(`[agent-venom] plugin fetched via tarball -> ${join(cacheDir, "node_modules", pluginName)}`)
     return { ok: true }
   } catch (err: any) {
     return { ok: false, error: `Tarball fetch failed: ${err?.message || err}` }
@@ -234,60 +260,29 @@ async function fetchViaSparseClone(
   gitUrl: string,
   ref: string,
   cacheDir: string,
+  pluginName: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
   const tmpDir = cacheDir + ".tmp-clone"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
 
-    // Clone with sparse-checkout
     await execFileAsync("git", [
-      "clone",
-      "--filter=blob:none",
-      "--sparse",
-      "--branch",
-      ref,
-      "--depth",
-      "1",
-      gitUrl,
-      tmpDir,
+      "clone", "--filter=blob:none", "--sparse", "--branch", ref,
+      "--depth", "1", gitUrl, tmpDir,
     ], { timeout: 120_000 })
 
-    // Enable sparse-checkout with cone mode
     await execFileAsync("git", [
-      "sparse-checkout",
-      "init",
-      "--cone",
+      "sparse-checkout", "init", "--cone",
     ], { cwd: tmpDir, timeout: 10_000 })
 
-    // Set the directories to check out
     await execFileAsync("git", [
-      "sparse-checkout",
-      "set",
-      ...OPENCODE_DIRS,
+      "sparse-checkout", "set", ...OPENCODE_DIRS,
     ], { cwd: tmpDir, timeout: 30_000 })
 
-    // Create cache dir and copy
-    if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true })
-    mkdirSync(cacheDir, { recursive: true })
-
-    for (const dir of OPENCODE_DIRS) {
-      const src = join(tmpDir, dir)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, dir), { recursive: true })
-      }
-    }
-
-    for (const file of ["package.json", "README.md"]) {
-      const src = join(tmpDir, file)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, file))
-      }
-    }
-
-    log(`[agent-venom] plugin fetched via sparse clone -> ${cacheDir}`)
+    installPluginIntoCache(tmpDir, cacheDir, pluginName, gitUrl, ref)
+    log(`[agent-venom] plugin fetched via sparse clone -> ${join(cacheDir, "node_modules", pluginName)}`)
     return { ok: true }
   } catch (err: any) {
     return { ok: false, error: `Sparse clone failed: ${err?.message || err}` }
@@ -300,43 +295,20 @@ async function fetchViaFullClone(
   gitUrl: string,
   ref: string,
   cacheDir: string,
+  pluginName: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
   const tmpDir = cacheDir + ".tmp-fullclone"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
 
     await execFileAsync("git", [
-      "clone",
-      "--branch",
-      ref,
-      "--depth",
-      "1",
-      gitUrl,
-      tmpDir,
+      "clone", "--branch", ref, "--depth", "1", gitUrl, tmpDir,
     ], { timeout: 120_000 })
 
-    // Create cache dir and copy needed contents
-    if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true })
-    mkdirSync(cacheDir, { recursive: true })
-
-    for (const dir of OPENCODE_DIRS) {
-      const src = join(tmpDir, dir)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, dir), { recursive: true })
-      }
-    }
-
-    for (const file of ["package.json", "README.md"]) {
-      const src = join(tmpDir, file)
-      if (existsSync(src)) {
-        cpSync(src, join(cacheDir, file))
-      }
-    }
-
-    log(`[agent-venom] plugin fetched via full clone -> ${cacheDir}`)
+    installPluginIntoCache(tmpDir, cacheDir, pluginName, gitUrl, ref)
+    log(`[agent-venom] plugin fetched via full clone -> ${join(cacheDir, "node_modules", pluginName)}`)
     return { ok: true }
   } catch (err: any) {
     return { ok: false, error: `Full clone failed: ${err?.message || err}` }
@@ -364,7 +336,6 @@ export async function fetchAgentVenomPlugin(
   try {
     config = JSON.parse(raw)
   } catch {
-    // Try JSONC parsing
     try {
       const jsonc = await import("jsonc-parser")
       const { parse } = jsonc
@@ -374,7 +345,6 @@ export async function fetchAgentVenomPlugin(
     }
   }
 
-  // Find the agent-venom plugin entry
   const plugins: any[] = Array.isArray(config?.plugin) ? config.plugin : []
 
   for (const entry of plugins) {
@@ -388,7 +358,6 @@ export async function fetchAgentVenomPlugin(
 
     if (!pluginId) continue
 
-    // Check if this is the agent-venom plugin
     if (
       pluginId.startsWith("agent-venom@") ||
       pluginId.startsWith("my-agents@") ||
