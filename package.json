@@ -1,0 +1,39 @@
+{
+  "name": "@venom120/agent-venom",
+  "version": "0.0.1-alpha",
+  "description": "Cross-platform orchestration and installation for Agent-Venom and ECC.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "agent-venom": "./dist/cli/main.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "agents/",
+    "profiles/",
+    "runtimes/",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=18",
+    "opencode": ">=1.18.25 <2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node ./scripts/clean.js",
+    "check": "npm run build",
+    "start": "node ./dist/cli/main.js",
+    "test:opencode-profile": "npm run build && node tests/acceptance/opencode-profile.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1"
+  }
+}

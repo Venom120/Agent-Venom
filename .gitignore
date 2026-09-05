@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+*.tgz
+
+# Local managed ECC source boundary.
+ONLY_FOR_CONTEXT/
+
+# During Vibe Coding
+PROGRESS.md
+TODO.md
+task.md
+implementation_plan.md
+HANDOFF.md
+tests/
