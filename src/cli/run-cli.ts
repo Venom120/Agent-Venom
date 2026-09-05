@@ -25,14 +25,15 @@ import { createInterface } from "node:readline"
 import { acquireLock } from "../state/lock.js"
 import { applyOpenCodeProfile } from "../adapters/runtimes/opencode/transaction.js"
 import { runWslCommand } from "../adapters/platforms/wsl.js"
-import { fetchAgentVenomPlugin } from "../core/plugin-fetch.js"
+import { fetchAgentVenomPlugin, removePluginCache } from "../core/plugin-fetch.js"
 
 const VERSION = "0.0.1-alpha"
 
 const COMMANDS = [
   "install <opencode|dsh>",
   "uninstall <runtime>",
-  "update [self|runtime|agents|generated]",
+  "update [self|runtime|agents|generated|plugin]",
+  "remove plugin",
   "profile [list|current|use <name>]",
   "runtime [list|status|start|stop|restart|logs]",
   "startup [status|enable|disable]",
@@ -131,6 +132,10 @@ export async function runCli(args: readonly string[]): Promise<number> {
 
   if (command === "update") {
     return await runUpdate(args.slice(1))
+  }
+
+  if (command === "remove") {
+    return await runRemove(args.slice(1))
   }
 
   console.error(`Command '${command}' is not implemented yet.`)
@@ -353,6 +358,87 @@ async function runUpdate(args: readonly string[]): Promise<number> {
     console.error(`Plugin fetch failed: ${result.error}`)
     return 1
   }
+}
+
+// ---------------------------------------------------------------------------
+// remove command — remove plugin cache and/or config entry
+// ---------------------------------------------------------------------------
+
+async function runRemove(args: readonly string[]): Promise<number> {
+  const target = args[0]
+
+  if (target !== "plugin" && target !== "plugins") {
+    console.error("Usage: agent-venom remove plugin [--config] [--cache]")
+    console.error("")
+    console.error("Options:")
+    console.error("  --config   Remove the plugin entry from opencode.json")
+    console.error("  --cache    Remove the cached plugin files from ~/.cache/opencode/packages/")
+    console.error("  (default)  Remove both config entry and cache")
+    return 2
+  }
+
+  const doConfig = flag(args, "--config") || (!flag(args, "--cache"))
+  const doCache = flag(args, "--cache") || (!flag(args, "--config"))
+  const paths = resolveAgentVenomPaths()
+
+  // Remove cache
+  if (doCache) {
+    const result = removePluginCache((msg) => console.log(msg))
+    if (!result.removed) {
+      console.log("No cached plugin files found.")
+    }
+  }
+
+  // Remove config entry
+  if (doConfig) {
+    const configPath = await import("../adapters/runtimes/opencode/config-paths.js")
+      .then(m => m.resolveOpenCodeConfigPath())
+    const { readFileSync: readFS, writeFileSync: writeFS, existsSync: existsFS } = await import("node:fs")
+
+    if (!existsFS(configPath)) {
+      console.error(`OpenCode config not found: ${configPath}`)
+      return 1
+    }
+
+    const raw = readFS(configPath, "utf8")
+    let config: any
+
+    try {
+      config = JSON.parse(raw)
+    } catch {
+      try {
+        const jsonc = await import("jsonc-parser")
+        config = jsonc.parse(raw)
+      } catch {
+        console.error("Cannot parse OpenCode config")
+        return 1
+      }
+    }
+
+    const plugins: any[] = Array.isArray(config?.plugin) ? config.plugin : []
+    const before = plugins.length
+    const isManaged = (entry: any): boolean => {
+      let id: string | null = null
+      if (typeof entry === "string") id = entry
+      else if (Array.isArray(entry) && typeof entry[0] === "string") id = entry[0]
+      if (!id) return false
+      return id.startsWith("agent-venom@") ||
+        id.startsWith("my-agents@") ||
+        id.includes("Venom120/Agent-Venom")
+    }
+
+    config.plugin = plugins.filter((e: any) => !isManaged(e))
+
+    if (config.plugin.length === before) {
+      console.log("No managed agent-venom plugin entry found in config.")
+    } else {
+      writeFS(configPath, JSON.stringify(config, null, 2))
+      console.log(`Removed agent-venom plugin entry from ${configPath}`)
+    }
+  }
+
+  console.log("Agent-Venom plugin removed. Restart OpenCode to apply.")
+  return 0
 }
 
 // ---------------------------------------------------------------------------

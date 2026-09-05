@@ -65,18 +65,10 @@ function parseYaml(lines) {
 // ── Plugin entry ─────────────────────────────────────────────────────────────
 export default async function (_input, options) {
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-    // The plugin only ever reads from `agents/`. The `setup/`,
-    // `dsh/`, `docs/` and any other top-level directories are
-    // intentionally NOT walked by this loader, so they are not
-    // copied into OpenCode's package cache and do not pollute the
-    // runtime. If you ever need to load more paths, do it here
-    // explicitly — never walk the whole repoRoot.
+    // Only walk agents/ and skills/ — everything else is excluded.
     const agentsDir = join(repoRoot, "agents");
-    // Hard guard: refuse to walk directories that are not the
-    // canonical agent directory. This is defensive; the loop below
-    // only iterates `agentsDir`, but if a future refactor adds a
-    // generic `readdirSync(repoRoot)` it will fail here first.
-    const allowedRoots = new Set([agentsDir]);
+    const skillsDir = join(repoRoot, "skills");
+    const allowedRoots = new Set([agentsDir, skillsDir]);
     // externalSkills comes from the second element of the plugin tuple:
     //
     // ["agent-venom@...", {
@@ -124,11 +116,26 @@ export default async function (_input, options) {
                     };
                 }
             }
-            // ── Register external skills ─────────────────────────────────────────
+            // ── Register built-in skills from skills/ ─────────────────────────────
             config.skills = config.skills ?? {};
             const paths = Array.isArray(config.skills.paths)
                 ? config.skills.paths
                 : [];
+            if (existsSync(skillsDir)) {
+                for (const skillName of readdirSync(skillsDir)) {
+                    const skillDir = join(skillsDir, skillName);
+                    if (!existsSync(skillDir))
+                        continue;
+                    const skillMd = join(skillDir, "SKILL.md");
+                    if (!existsSync(skillMd))
+                        continue;
+                    if (!paths.includes(skillDir)) {
+                        paths.push(skillDir);
+                        console.log(`[agent-venom] registered built-in skill: ${skillName}`);
+                    }
+                }
+            }
+            // ── Register external skills ─────────────────────────────────────────
             if (externalSkills.length) {
                 const cacheRoot = join(homedir(), ".cache", "opencode", "packages");
                 if (!existsSync(cacheRoot)) {

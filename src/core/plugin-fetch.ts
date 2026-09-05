@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 import { homedir } from "node:os"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -8,9 +8,9 @@ import { resolveOpenCodeConfigPath } from "../adapters/runtimes/opencode/config-
 const execFileAsync = promisify(execFile)
 
 // Directories to keep from the Agent-Venom repo for OpenCode plugin loading.
-// The plugin loader (load-agents.ts) reads agents/ via import.meta.url.
-// dist/ contains the compiled plugin entry. package.json declares the main field.
-const OPENCODE_DIRS = ["agents", "dist"]
+// agents/ and skills/ are loaded by the plugin loader (load-agents.ts).
+// dist/ contains the compiled plugin entry.
+const OPENCODE_DIRS = ["agents", "dist", "skills"]
 
 export interface PluginFetchOptions {
   /** Ref to checkout (branch, tag, commit). Defaults to "main". */
@@ -372,4 +372,44 @@ export async function fetchAgentVenomPlugin(
   }
 
   return { ok: false, error: "No agent-venom plugin entry found in opencode.json" }
+}
+
+/**
+ * Remove the agent-venom plugin cache directory from OpenCode's package cache.
+ * Returns true if something was removed, false if nothing was found.
+ */
+export function removePluginCache(
+  log: (msg: string) => void = () => {},
+): { removed: boolean; path?: string } {
+  const pluginEntry = "agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main"
+  const cacheDir = resolvePluginCacheDir(pluginEntry)
+
+  if (!cacheDir) return { removed: false }
+
+  if (!existsSync(cacheDir)) {
+    log(`[agent-venom] cache already clean: ${cacheDir}`)
+    return { removed: false }
+  }
+
+  rmSync(cacheDir, { recursive: true, force: true })
+  log(`[agent-venom] removed cache: ${cacheDir}`)
+
+  // Clean up empty parent directories up to the packages root
+  const packagesRoot = join(homedir(), ".cache", "opencode", "packages")
+  let cur = dirname(cacheDir)
+  while (cur !== packagesRoot && cur.startsWith(packagesRoot)) {
+    try {
+      const entries = readdirSync(cur)
+      if (entries.length === 0) {
+        rmSync(cur)
+        cur = dirname(cur)
+      } else {
+        break
+      }
+    } catch {
+      break
+    }
+  }
+
+  return { removed: true, path: cacheDir }
 }
