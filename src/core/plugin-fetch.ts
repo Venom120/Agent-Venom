@@ -169,7 +169,8 @@ async function fetchViaTarball(
   cacheDir: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const tmpDir = join(cacheDir, ".tmp-tarball")
+  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
+  const tmpDir = cacheDir + ".tmp-tarball"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
@@ -235,7 +236,8 @@ async function fetchViaSparseClone(
   cacheDir: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const tmpDir = join(cacheDir, ".tmp-clone")
+  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
+  const tmpDir = cacheDir + ".tmp-clone"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
@@ -300,7 +302,8 @@ async function fetchViaFullClone(
   cacheDir: string,
   log: (msg: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const tmpDir = join(cacheDir, ".tmp-fullclone")
+  // Use a temp dir OUTSIDE cacheDir so rmSync(cacheDir) doesn't destroy our source files
+  const tmpDir = cacheDir + ".tmp-fullclone"
 
   try {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
