@@ -290,7 +290,7 @@ async function runDshInstall(
 }
 
 // ---------------------------------------------------------------------------
-// DSH preset sync — mirrors My-Agents sync-preset.js pattern
+// DSH preset sync — mirrors Agent-Venom sync-preset.js pattern
 // ---------------------------------------------------------------------------
 
 /**atomatically
@@ -362,7 +362,7 @@ function buildAgentVenomPresetYml(): string {
 /**
  * Generate the Agent-Venom cordis composition YAML.
  *
- * This mirrors the My-Agents pattern: standard DSH tool plugins plus the
+ * This mirrors the Agent-Venom pattern: standard DSH tool plugins plus the
  * Agent-Venom master persona with the six route-locked pipeline workers.
  * The model role IDs come from the install plan (env), not from hardcoded strings.
  */

@@ -8,6 +8,21 @@ export interface MergeOptions {
 }
 
 /**
+ * True for Agent-Venom-managed plugin IDs.
+ * Canonical: agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main
+ * Legacy cleanup: my-agents@git+... (My-Agents/Agent-Venom), @venom120/agent-venom,
+ * github:venom120/Agent-Venom shortcuts.
+ */
+function isManagedAgentVenomPluginId(id: string): boolean {
+  if (id.startsWith("agent-venom@git+") && id.includes("github.com/Venom120/Agent-Venom")) return true
+  if (id.startsWith("my-agents@git+") && (id.includes("Agent-Venom") || id.includes("My-Agents"))) return true
+  if (id === "@venom120/agent-venom") return true
+  if (id.startsWith("@venom120/agent-venom@")) return true
+  if (id.startsWith("github:venom120/Agent-Venom")) return true
+  return false
+}
+
+/**
  * Semantically merge the Agent-Venom configuration into an OpenCode JSONC string.
  * Preserves user-owned plugins, comments, and formatting.
  */
@@ -18,7 +33,7 @@ export function mergeProfileConfig(options: MergeOptions): string {
   // 1. Determine the exact plugin strings for the managed profiles.
   // Agent-Venom uses the current orchestrator repository pipeline
   // ECC uses the ecc-universal package.
-  const agentVenomPlugin = ["my-agents@git+https://github.com/Venom120/Agent-Venom.git#main", { externalSkills: [] }]
+  const agentVenomPlugin = ["agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main", { externalSkills: [] }]
   const eccPlugin = "ecc-universal"
 
   // 2. Parse the existing 'plugin' array to preserve user plugins and swap managed ones.
@@ -26,10 +41,12 @@ export function mergeProfileConfig(options: MergeOptions): string {
   const existingPlugins: any[] = Array.isArray(rootNode.plugin) ? rootNode.plugin : []
 
   // Filter out any previously managed Agent-Venom or ECC plugins.
+  // Keeps legacy my-agents@git+ entries for cleanup, but the canonical
+  // Agent-Venom entry is agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main.
   const filteredPlugins = existingPlugins.filter(p => {
     if (typeof p === "string" && (p === "ecc-universal")) return false
-    if (typeof p === "string" && p.startsWith("my-agents@git+") && (p.includes("Agent-Venom") || p.includes("My-Agents"))) return false
-    if (Array.isArray(p) && typeof p[0] === "string" && p[0].startsWith("my-agents@git+") && (p[0].includes("Agent-Venom") || p[0].includes("My-Agents"))) return false
+    if (typeof p === "string" && isManagedAgentVenomPluginId(p)) return false
+    if (Array.isArray(p) && typeof p[0] === "string" && isManagedAgentVenomPluginId(p[0])) return false
     return true
   })
 

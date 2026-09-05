@@ -117,7 +117,7 @@ export default async function (_input: any, options: any) {
 
   // externalSkills comes from the second element of the plugin tuple:
   //
-  // ["my-agents@...", {
+  // ["agent-venom@...", {
   //   "externalSkills": [...]
   // }]
   //
@@ -136,7 +136,7 @@ export default async function (_input: any, options: any) {
         // directory is read.
         if (!allowedRoots.has(agentsDir)) {
           throw new Error(
-            `[my-agents] refusing to walk non-agent directory: ${agentsDir}`,
+            `[agent-venom] refusing to walk non-agent directory: ${agentsDir}`,
           )
         }
 
@@ -216,7 +216,7 @@ export default async function (_input: any, options: any) {
             // First run: clone the external repository.
             if (!existsSync(cacheDir)) {
               console.log(
-                `[my-agents] cloning ${ext.name} …`,
+                `[agent-venom] cloning ${ext.name} …`,
               )
 
               await execAsync(
@@ -239,12 +239,12 @@ export default async function (_input: any, options: any) {
               paths.push(extSkills)
 
               console.log(
-                `[my-agents] registered skills: ${ext.name}`,
+                `[agent-venom] registered skills: ${ext.name}`,
               )
             }
           } catch (err: any) {
             console.error(
-              `[my-agents] failed to clone ${ext.name}:`,
+              `[agent-venom] failed to clone ${ext.name}:`,
               err?.message || err,
             )
           }
