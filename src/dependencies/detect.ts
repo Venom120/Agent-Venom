@@ -2,6 +2,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import type { AgentVenomConfig } from "../core/contracts.js"
 import { runWslCommand } from "../adapters/platforms/wsl.js"
+import { OPENCODE_API_KEY_ENV_VAR } from "../config/env-file.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -59,13 +60,13 @@ async function detectLocalDependencies(
     checkExecutable("wsl", ["--status"], "wsl")
   ])
 
-  const apiKeyConfigured = Boolean(env.AGENT_VENOM_API_KEY || env.OMNIROUTE_API_KEY)
+  const openCodeApiKeyConfigured = Boolean(env[OPENCODE_API_KEY_ENV_VAR] || env.OMNIROUTE_API_KEY)
   checks.push({
     name: "omniroute",
-    available: apiKeyConfigured,
-    detail: apiKeyConfigured
-      ? "API key environment variable is configured"
-      : "No Agent-Venom or OmniRoute API key environment variable is configured"
+    available: openCodeApiKeyConfigured,
+    detail: openCodeApiKeyConfigured
+      ? "OpenCode API key environment variable is configured"
+      : "No OpenCode API key environment variable is configured (AV_OPENCODE_API_KEY)"
   })
 
   return {

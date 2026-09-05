@@ -76,7 +76,7 @@ export function mergeProfileConfig(options: MergeOptions): string {
       npm: "@ai-sdk/openai-compatible",
       options: {
         baseURL: config.provider.baseUrl,
-        apiKey: `{env:${config.provider.apiKeyEnv}}`
+        apiKey: "{env:AV_OPENCODE_API_KEY}"
       },
       models: {
         "free-reasoning": { name: "OmniRoute — Reasoning" },

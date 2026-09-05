@@ -21,10 +21,6 @@ export function validateProviderConfig(config: AgentVenomConfig): string[] {
     }
   }
 
-  if (config.provider.apiKeyEnv !== "AGENT_VENOM_API_KEY") {
-    errors.push("Provider credentials must use AGENT_VENOM_API_KEY")
-  }
-
   return errors
 }
 

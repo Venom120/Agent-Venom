@@ -18,7 +18,8 @@ import {
   writeAgentVenomEnv,
   loadAgentVenomEnv,
   resolveEnvFilePath,
-  API_KEY_ENV_VAR
+  OPENCODE_API_KEY_ENV_VAR,
+  DSH_API_KEY_ENV_VAR
 } from "../config/env-file.js"
 import type { EnvironmentKind, ModelRoleMapping } from "../core/contracts.js"
 import { createInterface } from "node:readline"
@@ -26,6 +27,7 @@ import { acquireLock } from "../state/lock.js"
 import { applyOpenCodeProfile } from "../adapters/runtimes/opencode/transaction.js"
 import { runWslCommand } from "../adapters/platforms/wsl.js"
 import { fetchAgentVenomPlugin, removePluginCache } from "../core/plugin-fetch.js"
+import { createOpenCodeLifecycle } from "../adapters/runtimes/opencode/opencode-lifecycle.js"
 
 const VERSION = "0.0.1-alpha"
 
@@ -136,6 +138,10 @@ export async function runCli(args: readonly string[]): Promise<number> {
 
   if (command === "remove") {
     return await runRemove(args.slice(1))
+  }
+
+  if (command === "runtime") {
+    return await runRuntime(args.slice(1))
   }
 
   console.error(`Command '${command}' is not implemented yet.`)
@@ -613,22 +619,25 @@ async function runInstall(args: readonly string[]): Promise<number> {
 
   // ── 5. API key ─────────────────────────────────────────────────────────────
 
-  // Load env file if it exists so the key is available in this process
+  // Load env file if it exists so the keys are available in this process
   const envFilePath = resolveEnvFilePath(targetEnvironment)
   await loadAgentVenomEnv(envFilePath)
 
-  if (!process.env[API_KEY_ENV_VAR]) {
+  // Determine which API keys are needed based on selected runtime
+  const needsOpenCodeKey = runtime === "opencode" || selectedSources.includes("agent-venom") || selectedSources.includes("ecc")
+  const needsDshKey = runtime === "dsh"
+
+  if (needsOpenCodeKey && !process.env[OPENCODE_API_KEY_ENV_VAR]) {
     if (nonInteractive || yes) {
-      // In CI/non-interactive, require the key to already be in the environment
       console.error(
-        `${API_KEY_ENV_VAR} is not set. ` +
+        `${OPENCODE_API_KEY_ENV_VAR} is not set. ` +
         `Export it in your environment before running agent-venom in non-interactive mode.`
       )
       return 2
     }
 
-    console.log(`\n${API_KEY_ENV_VAR} is not set.`)
-    const apiKey = await promptSecret("Enter your API key (input hidden):")
+    console.log(`\n${OPENCODE_API_KEY_ENV_VAR} is not set.`)
+    const apiKey = await promptSecret("Enter your OpenCode API key (input hidden):")
     if (!apiKey) {
       console.error("API key must not be empty.")
       return 2
@@ -636,18 +645,51 @@ async function runInstall(args: readonly string[]): Promise<number> {
 
     if (!dryRun) {
       try {
-        await writeAgentVenomEnv(targetEnvironment, apiKey)
+        await writeAgentVenomEnv(targetEnvironment, apiKey, process.env, "opencode")
         if (targetEnvironment === "windows-native") {
-          console.log(`✓ ${API_KEY_ENV_VAR} written to machine environment via setx`)
+          console.log(`✓ ${OPENCODE_API_KEY_ENV_VAR} written to machine environment via setx`)
         } else {
-          console.log(`✓ ${API_KEY_ENV_VAR} written to ${envFilePath}`)
+          console.log(`✓ ${OPENCODE_API_KEY_ENV_VAR} written to ${envFilePath}`)
         }
       } catch (error) {
         console.error(`Failed to write API key: ${error instanceof Error ? error.message : String(error)}`)
         return 2
       }
     } else {
-      console.log(`[dry-run] Would write ${API_KEY_ENV_VAR} to environment.`)
+      console.log(`[dry-run] Would write ${OPENCODE_API_KEY_ENV_VAR} to environment.`)
+    }
+  }
+
+  if (needsDshKey && !process.env[DSH_API_KEY_ENV_VAR]) {
+    if (nonInteractive || yes) {
+      console.error(
+        `${DSH_API_KEY_ENV_VAR} is not set. ` +
+        `Export it in your environment before running agent-venom in non-interactive mode.`
+      )
+      return 2
+    }
+
+    console.log(`\n${DSH_API_KEY_ENV_VAR} is not set.`)
+    const apiKey = await promptSecret("Enter your DSH API key (input hidden):")
+    if (!apiKey) {
+      console.error("API key must not be empty.")
+      return 2
+    }
+
+    if (!dryRun) {
+      try {
+        await writeAgentVenomEnv(targetEnvironment, apiKey, process.env, "dsh")
+        if (targetEnvironment === "windows-native") {
+          console.log(`✓ ${DSH_API_KEY_ENV_VAR} written to machine environment via setx`)
+        } else {
+          console.log(`✓ ${DSH_API_KEY_ENV_VAR} written to ${envFilePath}`)
+        }
+      } catch (error) {
+        console.error(`Failed to write API key: ${error instanceof Error ? error.message : String(error)}`)
+        return 2
+      }
+    } else {
+      console.log(`[dry-run] Would write ${DSH_API_KEY_ENV_VAR} to environment.`)
     }
   }
 
@@ -727,6 +769,108 @@ async function runInstall(args: readonly string[]): Promise<number> {
   await recordInstallResult(paths.stateFile, VERSION, result, selectedSources[0])
 
   console.log("\n✓ Installation complete.")
+  return 0
+}
+
+// ---------------------------------------------------------------------------
+// runtime command
+// ---------------------------------------------------------------------------
+
+async function runRuntime(args: readonly string[]): Promise<number> {
+  const subcommand = args[0]
+
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    console.log("Usage: agent-venom runtime <status|start|stop|restart> [--wsl] [--json]")
+    console.log("")
+    console.log("Subcommands:")
+    console.log("  status     Show runtime status")
+    console.log("  start      Start the runtime")
+    console.log("  stop       Stop the runtime")
+    console.log("  restart    Restart the runtime")
+    console.log("")
+    console.log("Options:")
+    console.log("  --wsl      Use the WSL-managed environment")
+    console.log("  --json     Emit machine-readable output")
+    return 0
+  }
+
+  if (!["status", "start", "stop", "restart"].includes(subcommand)) {
+    console.error(`Unknown runtime subcommand '${subcommand}'. Use start, stop, restart, or status.`)
+    return 2
+  }
+
+  const emitJson = flag(args, "--json")
+
+  // Detect environment
+  const { detectEnvironment } = await import("../environment/detect.js")
+  const detected = await detectEnvironment()
+  let env = detected.kind
+  if (flag(args, "--wsl")) {
+    env = "windows-wsl"
+  }
+
+  const lifecycle = createOpenCodeLifecycle(env)
+
+  if (subcommand === "status") {
+    try {
+      const status = await lifecycle.status()
+      const { detectOpenCodePaths } = await import("../adapters/runtimes/opencode/opencode-detect.js")
+      const paths = await detectOpenCodePaths()
+      if (emitJson) {
+        console.log(JSON.stringify({ ...status, paths: { binary: paths.binaryPath, config: paths.configDir, cache: paths.cacheDir, installMethod: paths.installMethod } }, null, 2))
+      } else {
+        console.log(`OpenCode status:`)
+        console.log(`  Installed:  ${status.installed}`)
+        console.log(`  Running:    ${status.running}`)
+        if (status.version) console.log(`  Version:    ${status.version}`)
+        if (status.pid) console.log(`  PID:        ${status.pid}`)
+        console.log(`  Port:       ${status.port}`)
+        console.log(`  Service:    ${status.serviceType}`)
+        console.log(`  Binary:     ${paths.binaryPath || "not found"}`)
+        console.log(`  Config:     ${paths.configDir}`)
+        console.log(`  Cache:      ${paths.cacheDir}`)
+        console.log(`  Install:    ${paths.installMethod}`)
+      }
+      return 0
+    } catch (error) {
+      console.error(`Failed to get status: ${messageOf(error)}`)
+      return 1
+    }
+  }
+
+  if (subcommand === "start") {
+    try {
+      await lifecycle.start()
+      console.log("OpenCode started.")
+      return 0
+    } catch (error) {
+      console.error(`Failed to start: ${messageOf(error)}`)
+      return 1
+    }
+  }
+
+  if (subcommand === "stop") {
+    try {
+      await lifecycle.stop()
+      console.log("OpenCode stopped.")
+      return 0
+    } catch (error) {
+      console.error(`Failed to stop: ${messageOf(error)}`)
+      return 1
+    }
+  }
+
+  if (subcommand === "restart") {
+    try {
+      await lifecycle.restart()
+      console.log("OpenCode restarted.")
+      return 0
+    } catch (error) {
+      console.error(`Failed to restart: ${messageOf(error)}`)
+      return 1
+    }
+  }
+
   return 0
 }
 

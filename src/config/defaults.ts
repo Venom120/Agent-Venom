@@ -16,8 +16,7 @@ export const DEFAULT_CONFIG: AgentVenomConfig = {
   modelRoles: { ...DEFAULT_MODEL_ROLES },
   provider: {
     kind: "omniroute",
-    baseUrl: "http://127.0.0.1:20128/v1",
-    apiKeyEnv: "AGENT_VENOM_API_KEY"
+    baseUrl: "http://127.0.0.1:20128/v1"
   },
   services: {
     openCode: "av-opencode",

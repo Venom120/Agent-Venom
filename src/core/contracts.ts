@@ -27,7 +27,6 @@ export interface AgentVenomConfig {
   provider: {
     kind: "omniroute" | "custom"
     baseUrl?: string
-    apiKeyEnv: "AGENT_VENOM_API_KEY"
   }
   services: {
     openCode: string
