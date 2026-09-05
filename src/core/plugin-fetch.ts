@@ -100,7 +100,11 @@ function resolveTarballUrl(gitUrl: string, ref: string): string | null {
  * This matches the structure: { "dependencies": { "<name>": "github:..." } }
  */
 function writeWrapperPackageJson(cacheDir: string, pluginName: string, gitUrl: string, ref: string): void {
-  const gitDep = gitUrl.replace("https://", "")
+  // Convert "https://github.com/Venom120/Agent-Venom.git" to "github:Venom120/Agent-Venom"
+  let gitDep = gitUrl
+    .replace("https://", "")
+    .replace("github.com/", "")
+    .replace(/\.git$/, "")
   const pkg = {
     dependencies: {
       [pluginName]: `github:${gitDep}#${ref}`
