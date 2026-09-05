@@ -22,6 +22,7 @@ import { applyOpenCodeProfile } from "../adapters/runtimes/opencode/transaction.
 import type { AgentVenomConfig } from "./contracts.js"
 import { runWslCommand } from "../adapters/platforms/wsl.js"
 import { checkWslCommand } from "../dependencies/detect.js"
+import { fetchAgentVenomPlugin } from "./plugin-fetch.js"
 
 const execFileAsync = promisify(execFile)
 const OPENCODE_NPM_PACKAGE = "opencode-ai"
@@ -253,6 +254,24 @@ async function runOpenCodeInstall(
 
   // Step 4: Agent-Venom DSH preset sync (if applicable)
   await syncAgentVenomDshPreset(plan, ctx)
+
+  // Step 5: Fetch plugin files into OpenCode cache
+  const fetchStep = "Fetch Agent-Venom plugin files into OpenCode cache"
+  log(`→ ${fetchStep}`)
+  if (dryRun) {
+    steps.push({ step: fetchStep, status: "ok", detail: "dry-run: would fetch plugin files" })
+  } else {
+    try {
+      const fetchResult = await fetchAgentVenomPlugin({ log })
+      if (fetchResult.ok) {
+        steps.push({ step: fetchStep, status: "ok", detail: "Plugin files fetched" })
+      } else {
+        steps.push({ step: fetchStep, status: "failed", detail: fetchResult.error ?? "Unknown fetch error" })
+      }
+    } catch (error) {
+      steps.push({ step: fetchStep, status: "failed", detail: messageOf(error) })
+    }
+  }
 
   if (transaction && steps.some(step => step.status === "failed")) {
     const rollbackStep = "Rollback OpenCode profile transaction"

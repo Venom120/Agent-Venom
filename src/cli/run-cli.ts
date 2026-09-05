@@ -25,6 +25,7 @@ import { createInterface } from "node:readline"
 import { acquireLock } from "../state/lock.js"
 import { applyOpenCodeProfile } from "../adapters/runtimes/opencode/transaction.js"
 import { runWslCommand } from "../adapters/platforms/wsl.js"
+import { fetchAgentVenomPlugin } from "../core/plugin-fetch.js"
 
 const VERSION = "0.0.1-alpha"
 
@@ -73,6 +74,9 @@ function printHelp(): void {
   console.log("  --model-fast-coding <id>")
   console.log("  --model-context <id>")
   console.log("  --model-vision <id>")
+  console.log("")
+  console.log("Update options:")
+  console.log("  --force                              Force re-fetch even if cache exists")
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +127,10 @@ export async function runCli(args: readonly string[]): Promise<number> {
 
   if (command === "doctor") {
     return await runDoctor(args.slice(1))
+  }
+
+  if (command === "update") {
+    return await runUpdate(args.slice(1))
   }
 
   console.error(`Command '${command}' is not implemented yet.`)
@@ -185,6 +193,17 @@ async function runProfile(args: readonly string[]): Promise<number> {
         { path: transaction.configPath, owner: "agent-venom.opencode.profile" }
       ]
     })
+
+    // Fetch plugin files into OpenCode cache so agents are available
+    console.log("Fetching Agent-Venom plugin files...")
+    const fetchResult = await fetchAgentVenomPlugin({
+      log: (msg) => console.log(msg),
+      force: flag(args, "--force"),
+    })
+    if (!fetchResult.ok) {
+      console.warn(`Warning: plugin fetch failed: ${fetchResult.error}`)
+    }
+
     console.log(`OpenCode profile activated: ${profile}`)
     return 0
   } catch (error) {
@@ -304,6 +323,36 @@ async function runDoctor(args: readonly string[]): Promise<number> {
   }
 
   return dependencies.complete ? 0 : 1
+}
+
+// ---------------------------------------------------------------------------
+// update command — fetch/refresh plugin files into OpenCode cache
+// ---------------------------------------------------------------------------
+
+async function runUpdate(args: readonly string[]): Promise<number> {
+  const target = args[0]
+
+  if (target !== "plugin" && target !== "plugins") {
+    console.error("Usage: agent-venom update plugin [--force]")
+    return 2
+  }
+
+  const force = flag(args, "--force")
+
+  console.log(force ? "Force-fetching Agent-Venom plugin files..." : "Fetching Agent-Venom plugin files...")
+
+  const result = await fetchAgentVenomPlugin({
+    force,
+    log: (msg) => console.log(msg),
+  })
+
+  if (result.ok) {
+    console.log("Plugin files updated successfully.")
+    return 0
+  } else {
+    console.error(`Plugin fetch failed: ${result.error}`)
+    return 1
+  }
 }
 
 // ---------------------------------------------------------------------------
