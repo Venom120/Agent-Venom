@@ -28,6 +28,7 @@ import { applyOpenCodeProfile } from "../adapters/runtimes/opencode/transaction.
 import { runWslCommand } from "../adapters/platforms/wsl.js"
 import { fetchAgentVenomPlugin, removePluginCache } from "../core/plugin-fetch.js"
 import { createOpenCodeLifecycle } from "../adapters/runtimes/opencode/opencode-lifecycle.js"
+import { createDshLifecycle } from "../adapters/runtimes/dsh/dsh-lifecycle.js"
 
 const VERSION = "0.0.1-alpha"
 
@@ -780,7 +781,7 @@ async function runRuntime(args: readonly string[]): Promise<number> {
   const subcommand = args[0]
 
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
-    console.log("Usage: agent-venom runtime <status|start|stop|restart> [--wsl] [--json]")
+    console.log("Usage: agent-venom runtime <status|start|stop|restart> [--runtime <opencode|dsh>] [--wsl] [--json]")
     console.log("")
     console.log("Subcommands:")
     console.log("  status     Show runtime status")
@@ -789,6 +790,7 @@ async function runRuntime(args: readonly string[]): Promise<number> {
     console.log("  restart    Restart the runtime")
     console.log("")
     console.log("Options:")
+    console.log("  --runtime <opencode|dsh>   Target runtime (default: opencode)")
     console.log("  --wsl      Use the WSL-managed environment")
     console.log("  --json     Emit machine-readable output")
     return 0
@@ -800,6 +802,12 @@ async function runRuntime(args: readonly string[]): Promise<number> {
   }
 
   const emitJson = flag(args, "--json")
+  const targetRuntime = flagValue(args, "--runtime") || "opencode"
+
+  if (targetRuntime !== "opencode" && targetRuntime !== "dsh") {
+    console.error("--runtime must be one of: opencode, dsh")
+    return 2
+  }
 
   // Detect environment
   const { detectEnvironment } = await import("../environment/detect.js")
@@ -809,27 +817,48 @@ async function runRuntime(args: readonly string[]): Promise<number> {
     env = "windows-wsl"
   }
 
-  const lifecycle = createOpenCodeLifecycle(env)
+  const lifecycle = targetRuntime === "dsh"
+    ? createDshLifecycle(env)
+    : createOpenCodeLifecycle(env)
 
   if (subcommand === "status") {
     try {
       const status = await lifecycle.status()
-      const { detectOpenCodePaths } = await import("../adapters/runtimes/opencode/opencode-detect.js")
-      const paths = await detectOpenCodePaths()
-      if (emitJson) {
-        console.log(JSON.stringify({ ...status, paths: { binary: paths.binaryPath, config: paths.configDir, cache: paths.cacheDir, installMethod: paths.installMethod } }, null, 2))
+      if (targetRuntime === "dsh") {
+        const { detectDshPaths } = await import("../adapters/runtimes/dsh/dsh-detect.js")
+        const paths = await detectDshPaths()
+        if (emitJson) {
+          console.log(JSON.stringify({ runtime: "dsh", ...status, paths: { binary: paths.binaryPath, dshHome: paths.dshHome, installMethod: paths.installMethod } }, null, 2))
+        } else {
+          console.log(`DSH status:`)
+          console.log(`  Installed:  ${status.installed}`)
+          console.log(`  Running:    ${status.running}`)
+          if (status.version) console.log(`  Version:    ${status.version}`)
+          if (status.pid) console.log(`  PID:        ${status.pid}`)
+          console.log(`  Port:       ${status.port}`)
+          console.log(`  Service:    ${status.serviceType}`)
+          console.log(`  Binary:     ${paths.binaryPath || "not found"}`)
+          console.log(`  DSH Home:   ${paths.dshHome}`)
+          console.log(`  Install:    ${paths.installMethod}`)
+        }
       } else {
-        console.log(`OpenCode status:`)
-        console.log(`  Installed:  ${status.installed}`)
-        console.log(`  Running:    ${status.running}`)
-        if (status.version) console.log(`  Version:    ${status.version}`)
-        if (status.pid) console.log(`  PID:        ${status.pid}`)
-        console.log(`  Port:       ${status.port}`)
-        console.log(`  Service:    ${status.serviceType}`)
-        console.log(`  Binary:     ${paths.binaryPath || "not found"}`)
-        console.log(`  Config:     ${paths.configDir}`)
-        console.log(`  Cache:      ${paths.cacheDir}`)
-        console.log(`  Install:    ${paths.installMethod}`)
+        const { detectOpenCodePaths } = await import("../adapters/runtimes/opencode/opencode-detect.js")
+        const paths = await detectOpenCodePaths()
+        if (emitJson) {
+          console.log(JSON.stringify({ runtime: "opencode", ...status, paths: { binary: paths.binaryPath, config: paths.configDir, cache: paths.cacheDir, installMethod: paths.installMethod } }, null, 2))
+        } else {
+          console.log(`OpenCode status:`)
+          console.log(`  Installed:  ${status.installed}`)
+          console.log(`  Running:    ${status.running}`)
+          if (status.version) console.log(`  Version:    ${status.version}`)
+          if (status.pid) console.log(`  PID:        ${status.pid}`)
+          console.log(`  Port:       ${status.port}`)
+          console.log(`  Service:    ${status.serviceType}`)
+          console.log(`  Binary:     ${paths.binaryPath || "not found"}`)
+          console.log(`  Config:     ${paths.configDir}`)
+          console.log(`  Cache:      ${paths.cacheDir}`)
+          console.log(`  Install:    ${paths.installMethod}`)
+        }
       }
       return 0
     } catch (error) {
@@ -841,7 +870,7 @@ async function runRuntime(args: readonly string[]): Promise<number> {
   if (subcommand === "start") {
     try {
       await lifecycle.start()
-      console.log("OpenCode started.")
+      console.log(`${targetRuntime === "dsh" ? "DSH" : "OpenCode"} started.`)
       return 0
     } catch (error) {
       console.error(`Failed to start: ${messageOf(error)}`)
@@ -852,7 +881,7 @@ async function runRuntime(args: readonly string[]): Promise<number> {
   if (subcommand === "stop") {
     try {
       await lifecycle.stop()
-      console.log("OpenCode stopped.")
+      console.log(`${targetRuntime === "dsh" ? "DSH" : "OpenCode"} stopped.`)
       return 0
     } catch (error) {
       console.error(`Failed to stop: ${messageOf(error)}`)
@@ -863,7 +892,7 @@ async function runRuntime(args: readonly string[]): Promise<number> {
   if (subcommand === "restart") {
     try {
       await lifecycle.restart()
-      console.log("OpenCode restarted.")
+      console.log(`${targetRuntime === "dsh" ? "DSH" : "OpenCode"} restarted.`)
       return 0
     } catch (error) {
       console.error(`Failed to restart: ${messageOf(error)}`)
