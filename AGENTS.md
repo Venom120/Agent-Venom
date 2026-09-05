@@ -244,6 +244,51 @@ ECC-to-DSH. Reusable ECC-native DSH target support should be developed in
 ECC assets are parsed and generated programmatically. Hundreds of manual DSH
 entries must not be copied or maintained.
 
+## Agent-Venom Release Channels
+
+Agent-Venom uses three npm dist-tag channels for package releases:
+
+| Channel | npm tag | Install command | Purpose |
+|---------|---------|-----------------|---------|
+| **stable** | `latest` | `npm install -g @venom120/agent-venom` | Default, tested release |
+| **latest** | `next` | `npm install -g @venom120/agent-venom@next` | Bleeding edge, new features |
+| **pinned** | `pinned` | `npm install -g @venom120/agent-venom@pinned` | Specific tested version |
+
+### Version scheme
+
+- **stable**: semver (`0.1.0`, `0.2.0`, `1.0.0`)
+- **latest**: pre-release tags (`0.1.0-beta.1`, `0.1.0-rc.1`)
+- **pinned**: any specific version (`0.0.1-alpha`, `0.1.0`)
+
+### Release workflow
+
+- `node scripts/release.js stable 0.1.0` — publish stable
+- `node scripts/release.js latest 0.1.0-beta.1` — publish latest/next
+- `node scripts/release.js pinned 0.0.1-alpha` — pin a version
+- `node scripts/release.js promote 0.1.0-beta.1` — promote latest to stable
+- `node scripts/release.js status` — show current dist-tags
+
+### Git tags
+
+- Stable releases get a `v{version}` tag (e.g., `v0.1.0`)
+- Latest releases get a `v{version}-next` tag
+- Pinned releases get a `v{version}-pinned` tag
+
+### Channel policy
+
+- `stable` is the default channel for `npm install`.
+- `latest` is for features under active development that may have rough edges.
+- `pinned` is for specific known-good versions users can lock to.
+- A version can be promoted from `latest` to `stable` after testing.
+- The `pinned` channel is manually managed; it does not auto-update.
+- During `0.x`, ship clean versions (`0.1.0`, `0.2.0`) directly to `stable`/`latest`.
+  The `0.x` major-zero is itself SemVer's "anything may change" signal.
+  Reserve `-next`/`-beta` suffixes for genuine previews of upcoming versions.
+- npm 11+ hard-errors when publishing a prerelease without `--tag`.
+  Always pass `--tag` explicitly for prerelease versions.
+- Use a single `main` branch. Tags mark releases. Dist-tags route consumers.
+  Git branches are for code management, not release distribution.
+
 ## State
 
 State is separate from runtime user configuration and records:
