@@ -33,7 +33,10 @@ export function mergeProfileConfig(options: MergeOptions): string {
   // 1. Determine the exact plugin strings for the managed profiles.
   // Agent-Venom uses the current orchestrator repository pipeline
   // ECC uses the ecc-universal package.
-  const agentVenomPlugin = ["agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main", { externalSkills: [] }]
+  // Plain-string form: OpenCode v1 only fetches string plugin entries and
+  // silently skips tuple entries, so options must not be embedded here.
+  // externalSkills defaults to [] inside the plugin loader anyway.
+  const agentVenomPlugin = "agent-venom@git+https://github.com/Venom120/Agent-Venom.git#main"
   const eccPlugin = "ecc-universal"
 
   // 2. Parse the existing 'plugin' array to preserve user plugins and swap managed ones.
